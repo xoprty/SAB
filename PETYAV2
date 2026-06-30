@@ -1,4 +1,4 @@
--- узел: meridian/roblox_utility_hub_v2_modified
+-- узел: meridian/roblox_utility_hub_v3_core
 -- deps: Delta Executor Environment (Roblox Client)
 -- параметры: UI_FONT (Arcade), UI_COLOR_PRIMARY (малиновый), ESP_CONTROLLER
 
@@ -17,7 +17,7 @@ local Camera = Workspace.CurrentCamera
 local ScreenGui = Instance.new("ScreenGui")
 pcall(function() ScreenGui.Parent = game:GetService("CoreGui") end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
-ScreenGui.Name = "PetyaHub_v2"
+ScreenGui.Name = "PetyaHub_v3"
 ScreenGui.ResetOnSpawn = false
 
 -- Глобальная матрица состояний
@@ -27,20 +27,40 @@ local States = {
     SpeedValue = 16,
     JumpBoost = false,
     JumpValue = 50,
-    AutoWeb = false,
-    BuyTrap = false,
-    Optimization = false,
     EspPlayers = false,
     EspLock = false,
-    EspBrainrot = false
+    AutoBat = false
 }
 
-local OriginalMaterials = {}
 local ESP_Storage = {}
 
 --------------------------------------------------------------------------------
--- ВСПОМОГАТЕЛЬНЫЕ СИСТЕМНЫЕ ФУНКЦИИ
+-- ВСПОМОГАТЕЛЬНЫЕ СИСТЕМНЫЕ ФУНКЦИИ И ПОИСК ЦЕЛЕЙ
 --------------------------------------------------------------------------------
+
+-- Функция определения ближайшего игрока по дистанции от Оператора
+local function GetClosestPlayerToMe()
+    local Target = nil
+    local MinDistance = math.huge
+    local MyChar = LocalPlayer.Character
+    local MyRoot = MyChar and MyChar:FindFirstChild("HumanoidRootPart")
+    
+    if MyRoot then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChildOfClass("Humanoid") then
+                if player.Character:FindFirstChildOfClass("Humanoid").Health > 0 then
+                    local Root = player.Character.HumanoidRootPart
+                    local Distance = (Root.Position - MyRoot.Position).Magnitude
+                    if Distance < MinDistance then
+                        MinDistance = Distance
+                        Target = player.Character
+                    end
+                end
+            end
+        end
+    end
+    return Target, MinDistance
+end
 
 -- Безопасный обход античита прыжков через импульс физики
 local LastJump = 0
@@ -52,7 +72,6 @@ UserInputService.JumpRequest:Connect(function()
         
         if Root and Humanoid then
             LastJump = tick()
-            -- Вместо смены стейта — силовой толчок вверх, обходящий счетчик стейтов гуманоида
             Root.Velocity = Vector3.new(Root.Velocity.X, States.JumpBoost and States.JumpValue or 50, Root.Velocity.Z)
         end
     end
@@ -77,84 +96,93 @@ RunService.PostSimulation:Connect(function()
     end
 end)
 
--- Контур AUTOWEB (Auto Aim для Web Slinger)
-local function GetClosestPlayerToCursor()
-    local Target = nil
-    local MinDistance = math.huge
+--------------------------------------------------------------------------------
+-- РЕАЛИЗАЦИЯ ИСПОЛНИТЕЛЬНЫХ КОМАНД (КНОПКИ И ЦИКЛЫ)
+--------------------------------------------------------------------------------
+
+-- Однократное точное наведение и выстрел Web Slinger
+local function TriggerAutoWeb()
+    local Character = LocalPlayer.Character
+    if not Character then return end
     
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local Root = player.Character.HumanoidRootPart
-            local ScreenPos, OnScreen = Camera:WorldToScreenPoint(Root.Position)
-            
-            if OnScreen then
-                local MousePos = UserInputService:GetMouseLocation()
-                local Distance = (Vector2.new(ScreenPos.X, ScreenPos.Y) - MousePos).Magnitude
-                if Distance < MinDistance and Distance < 300 then -- Радиус захвата 300 пикселей
-                    MinDistance = Distance
-                    Target = Root
-                end
+    local Tool = LocalPlayer.Backpack:FindFirstChild("Web Slinger") or LocalPlayer.Backpack:FindFirstChild("WebSlinger") or Character:FindFirstChild("Web Slinger") or Character:FindFirstChild("WebSlinger")
+    if Tool then
+        Tool.Parent = Character
+        task.wait(0.02)
+        local TargetChar = GetClosestPlayerToMe()
+        local TargetRoot = TargetChar and TargetChar:FindFirstChild("HumanoidRootPart")
+        if TargetRoot then
+            -- Фиксация вектора атаки
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, TargetRoot.Position)
+            Tool:Activate()
+            -- Дублирование триггера для сетевых инструментов
+            local Remote = Tool:FindFirstChildOfClass("RemoteEvent") or Tool:FindFirstChildOfClass("RemoteFunction")
+            if Remote then
+                pcall(function() Remote:FireServer(TargetRoot.Position) end)
+                pcall(function() Remote:FireServer(TargetRoot) end)
             end
         end
     end
-    return Target
 end
 
--- Перехват активации Web Slinger и автонаведение
-RunService.RenderStepped:Connect(function()
-    if States.AutoWeb then
-        local Character = LocalPlayer.Character
-        if Character then
-            -- Проверка наличия в Backpack и автоматическое экипирование в руки
-            local BackpackTool = LocalPlayer.Backpack:FindFirstChild("Web Slinger") or LocalPlayer.Backpack:FindFirstChild("WebSlinger")
-            if BackpackTool then
-                BackpackTool.Parent = Character
+-- Сетевой спам-запрос на покупку ловушки в магазине
+local function TriggerBuyTrap()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
+        if descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction") then
+            local name = descendant.Name:lower()
+            if name:find("buy") or name:find("shop") or name:find("purchase") or name:find("item") or name:find("trap") then
+                pcall(function()
+                    if descendant:IsA("RemoteEvent") then
+                        descendant:FireServer("Trap")
+                        descendant:FireServer("trap")
+                    else
+                        descendant:InvokeServer("Trap")
+                        descendant:InvokeServer("trap")
+                    end
+                end)
             end
-            
-            -- Проверка наличия Web Slinger в руках
-            local CharacterTool = Character:FindFirstChild("Web Slinger") or Character:FindFirstChild("WebSlinger")
-            if CharacterTool then
-                local Target = GetClosestPlayerToCursor()
-                if Target then
-                    -- Направление камеры точно на цель для идеального попадания
-                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, Target.Position)
-                    -- Автоматический выстрел
-                    CharacterTool:Activate()
+        end
+    end
+end
+
+-- Автоматический цикл преследования и атаки битой (AUTOBAT)
+task.spawn(function()
+    while true do
+        task.wait()
+        if States.AutoBat then
+            local Character = LocalPlayer.Character
+            local MyRoot = Character and Character:FindFirstChild("HumanoidRootPart")
+            if Character and MyRoot then
+                local Tool = LocalPlayer.Backpack:FindFirstChild("Bat") or LocalPlayer.Backpack:FindFirstChild("BAT") or Character:FindFirstChild("Bat") or Character:FindFirstChild("BAT")
+                if Tool then
+                    Tool.Parent = Character
+                end
+                
+                local TargetChar, Distance = GetClosestPlayerToMe()
+                if TargetChar and TargetChar:FindFirstChild("HumanoidRootPart") then
+                    local TargetRoot = TargetChar.HumanoidRootPart
+                    -- Сближение вплотную к хитбоксу цели
+                    MyRoot.CFrame = TargetRoot.CFrame * CFrame.new(0, 0, 2)
+                    
+                    local CurrentTool = Character:FindFirstChild("Bat") or Character:FindFirstChild("BAT")
+                    if CurrentTool then
+                        CurrentTool:Activate()
+                    end
                 end
             end
         end
     end
 end)
 
--- Автоматическая покупка ловушек (BUYTRAP)
-local function ProcessTrapPurchase()
-    task.spawn(function()
-        while States.BuyTrap do
-            local ReplicatedStorage = game:GetService("ReplicatedStorage")
-            -- Поиск сетевого интерфейса магазина по стандартным маскам путей
-            local ShopRemote = ReplicatedStorage:FindFirstChild("BuyItem") or 
-                               ReplicatedStorage:FindFirstChild("ShopRemote") or 
-                               ReplicatedStorage:FindFirstChild("PurchaseItem") or 
-                               ReplicatedStorage:FindFirstChild("Shop")
-            
-            if ShopRemote then
-                if ShopRemote:IsA("RemoteEvent") then
-                    ShopRemote:FireServer("Trap")
-                elseif ShopRemote:IsA("RemoteFunction") then
-                    ShopRemote:InvokeServer("Trap")
-                end
-            end
-            task.wait(0.3) -- Интервал сетевых запросов
-        end
-    end)
-end
-
 --------------------------------------------------------------------------------
--- МОДУЛЬ ESP УЗЛОВ
+-- СОВЕРШЕННЫЙ МОДУЛЬ СЧИТЫВАНИЯ И ОТРИСОВКИ ESP
 --------------------------------------------------------------------------------
 
 local function CreateESP(object, text, color, stateKey, isPlayer)
-    if ESP_Storage[object] then return end
+    if ESP_Storage[object] then 
+        return 
+    end
     
     local Box = Instance.new("Highlight")
     Box.Adornee = object
@@ -185,18 +213,21 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     task.spawn(function()
         while object and object.Parent and States[stateKey] do 
             if stateKey == "EspLock" then
-                -- Динамический опрос таймера базы данных
-                local TimeAttr = object:GetAttribute("TimeLeft") or object:GetAttribute("Timer") or object:GetAttribute("Time")
-                local TimeObj = object:FindFirstChild("TimeLeft") or object:FindFirstChild("Timer")
-                local TotalSeconds = 0
-                
-                if TimeAttr then
-                    TotalSeconds = tonumber(TimeAttr) or 0
-                elseif TimeObj and (TimeObj:IsA("IntValue") or TimeObj:IsA("NumberValue")) then
-                    TotalSeconds = TimeObj.Value
+                -- Парсинг реального текста таймера с объектов базы данных
+                local realTimerText = "0s"
+                local parentModel = object.Parent
+                if parentModel then
+                    for _, child in ipairs(parentModel:GetDescendants()) do
+                        if child:IsA("TextLabel") and (child.Text:lower():find("lock") or child.Text:find("s") or child.Text:match("%d+")) then
+                            realTimerText = child.Text:gsub("\n", " ")
+                            break
+                        elseif child:IsA("TextMesh") and (child.Text:lower():find("lock") or child.Text:find("s") or child.Text:match("%d+")) then
+                            realTimerText = child.Text:gsub("\n", " ")
+                            break
+                        end
+                    end
                 end
-                
-                Label.Text = "[BASE/LOCK] " .. tostring(TotalSeconds) .. "s"
+                Label.Text = realTimerText
             end
             task.wait(0.2) 
         end
@@ -206,27 +237,22 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     end)
 end
 
--- Поток обновления ESP
+-- Поток сканирования окружения
 task.spawn(function()
     while true do
         task.wait(1)
         if States.EspPlayers then
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                    -- Передаем весь Character для полной отрисовки хитбокса фигурки и p.Name для никнейма
+                    -- Подсветка всей фигурки (Character) и вывод Name
                     CreateESP(p.Character, p.Name, Color3.fromRGB(0, 255, 255), "EspPlayers", true)
                 end
             end
         end
-        -- Скан специфичных объектов в Workspace
-        if States.EspLock or States.EspBrainrot then
+        if States.EspLock then
             for _, obj in ipairs(Workspace:GetDescendants()) do
-                if States.EspLock and (obj.Name:lower():find("base") or obj.Name:lower():find("lock")) and obj:IsA("BasePart") then
-                    CreateESP(obj, "[BASE/LOCK] 0s", Color3.fromRGB(255, 170, 0), "EspLock", false)
-                end
-                if States.EspBrainrot and obj.Name:lower():find("brainrot") and obj:IsA("BasePart") then
-                    -- В симуляции берется узел с максимальным масштабом/стоимостью
-                    CreateESP(obj, "[TOP BRAINROT]", Color3.fromRGB(255, 0, 127), "EspBrainrot", false)
+                if States.EspLock and (obj.Name:lower():find("base") or obj.Name:lower():find("lock") or obj.Name:lower():find("timer")) and obj:IsA("BasePart") then
+                    CreateESP(obj, "0s", Color3.fromRGB(255, 170, 0), "EspLock", false)
                 end
             end
         end
@@ -234,10 +260,9 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- ГРАФИЧЕСКИЙ ИНТЕРФЕЙС ТЕРМИНАЛА (PIXEL STYLE)
+-- ГРАФИЧЕСКИЙ ИНТЕРФЕЙС ТЕРМИНАЛА (ПИКСЕЛЬНЫЙ СТИЛЬ)
 --------------------------------------------------------------------------------
 
--- Кнопка-триггер
 local ToggleButton = Instance.new("TextButton")
 local ButtonCorner = Instance.new("UICorner")
 local ButtonStroke = Instance.new("UIStroke")
@@ -259,7 +284,6 @@ ButtonStroke.Thickness = 2
 ButtonStroke.Color = Color3.fromRGB(255, 100, 200)
 ButtonStroke.Parent = ToggleButton
 
--- Главное меню
 local MainMenu = Instance.new("Frame")
 local MenuCorner = Instance.new("UICorner")
 local MenuStroke = Instance.new("UIStroke")
@@ -269,14 +293,14 @@ local UIListLayout = Instance.new("UIListLayout")
 
 MainMenu.Name = "MainMenu"
 MainMenu.Parent = ScreenGui
-MainMenu.Size = UDim2.new(0, 280, 0, 420) -- Слегка увеличен размер под новую кнопку
-MainMenu.Position = UDim2.new(0.5, -140, 0.5, -210)
+MainMenu.Size = UDim2.new(0, 280, 0, 380)
+MainMenu.Position = UDim2.new(0.5, -140, 0.5, -190)
 MainMenu.BackgroundColor3 = Color3.fromRGB(25, 10, 35)
 MainMenu.Visible = false
 MainMenu.Active = true
 MainMenu.Draggable = true
 
-MenuCorner.CornerRadius = UDim.new(0, 0) -- Пиксельный стиль требует острых или простых углов
+MenuCorner.CornerRadius = UDim.new(0, 0)
 MenuCorner.Parent = MainMenu
 MenuStroke.Thickness = 2
 MenuStroke.Color = Color3.fromRGB(255, 0, 127)
@@ -304,7 +328,6 @@ UIListLayout.Parent = Container
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 UIListLayout.Padding = UDim.new(0, 8)
 
--- Дополнительное подменю ESP
 local EspMenu = Instance.new("Frame")
 local EspLayout = Instance.new("UIListLayout")
 local EspStroke = Instance.new("UIStroke")
@@ -312,8 +335,8 @@ local EspHeader = Instance.new("TextLabel")
 
 EspMenu.Name = "EspMenu"
 EspMenu.Parent = ScreenGui
-EspMenu.Size = UDim2.new(0, 200, 0, 180)
-EspMenu.Position = UDim2.new(0.5, 150, 0.5, -90)
+EspMenu.Size = UDim2.new(0, 200, 0, 140)
+EspMenu.Position = UDim2.new(0.5, 150, 0.5, -70)
 EspMenu.BackgroundColor3 = Color3.fromRGB(20, 8, 30)
 EspMenu.Visible = false
 EspMenu.Active = true
@@ -336,7 +359,7 @@ EspLayout.SortOrder = Enum.SortOrder.LayoutOrder
 EspLayout.Padding = UDim.new(0, 5)
 
 --------------------------------------------------------------------------------
--- СБОРЩИК ЭЛЕМЕНТОВ УПРАВЛЕНИЯ С ТРАССИРОВКОЙ НАЖАТИЙ
+-- ГЕНЕРАТОРЫ КОМПОНЕНТОВ UI
 --------------------------------------------------------------------------------
 
 local function CreateToggleButton(name, layoutOrder, parentContainer, callback)
@@ -378,6 +401,43 @@ local function CreateToggleButton(name, layoutOrder, parentContainer, callback)
             Button.Text = "[OFF]"
         end
         callback(enabled)
+    end)
+end
+
+-- Специфический сборщик для кнопок мгновенного действия (Не ползунок, Не переключатель)
+local function CreateActionButton(name, layoutOrder, parentContainer, callback)
+    local Frame = Instance.new("Frame")
+    local TextLabel = Instance.new("TextLabel")
+    local Button = Instance.new("TextButton")
+    
+    Frame.Size = UDim2.new(1, 0, 0, 35)
+    Frame.BackgroundTransparency = 1
+    Frame.LayoutOrder = layoutOrder
+    Frame.Parent = parentContainer
+    
+    TextLabel.Size = UDim2.new(0.65, 0, 1, 0)
+    TextLabel.BackgroundTransparency = 1
+    TextLabel.Text = " " .. name
+    TextLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    TextLabel.Font = Enum.Font.Arcade
+    TextLabel.TextSize = 14
+    TextLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TextLabel.Parent = Frame
+    
+    Button.Size = UDim2.new(0.3, 0, 0.8, 0)
+    Button.Position = UDim2.new(0.7, 0, 0.1, 0)
+    Button.BackgroundColor3 = Color3.fromRGB(60, 20, 70)
+    Button.Text = "[RUN]"
+    Button.TextColor3 = Color3.fromRGB(255, 0, 127)
+    Button.Font = Enum.Font.Arcade
+    Button.TextSize = 12
+    Button.Parent = Frame
+    
+    Button.MouseButton1Click:Connect(function()
+        Button.Text = "[...]"
+        callback()
+        task.wait(0.1)
+        Button.Text = "[RUN]"
     end)
 end
 
@@ -454,32 +514,8 @@ local function CreateSlider(name, layoutOrder, parentContainer, min, max, callba
     end)
 end
 
--- Оптимизация мира (Картофельный режим)
-local function OptimizeWorld(enable)
-    if enable then
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and not obj:IsA("MeshPart") then
-                if not OriginalMaterials[obj] then OriginalMaterials[obj] = obj.Material end
-                obj.Material = Enum.Material.SmoothPlastic
-            elseif obj:IsA("Texture") or obj:IsA("Decal") then
-                if not OriginalMaterials[obj] then OriginalMaterials[obj] = obj.Transparency end
-                obj.Transparency = 1
-            end
-        end
-        Lighting.GlobalShadows = false
-    else
-        for obj, mat in pairs(OriginalMaterials) do
-            if obj and obj.Parent then
-                if obj:IsA("BasePart") then obj.Material = mat else obj.Transparency = mat end
-            end
-        end
-        table.clear(OriginalMaterials)
-        Lighting.GlobalShadows = true
-    end
-end
-
 --------------------------------------------------------------------------------
--- СБОРКА И КОМПИЛЯЦИЯ ИНТЕРФЕЙСА
+-- ТРАССИРОВКА И ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА СТАНЦИИ
 --------------------------------------------------------------------------------
 
 ToggleButton.MouseButton1Click:Connect(function()
@@ -488,17 +524,16 @@ ToggleButton.MouseButton1Click:Connect(function()
     if not toggle then EspMenu.Visible = false end
 end)
 
--- Наполнение главного меню
+-- Наполнение главного контейнера
 CreateToggleButton("INFJUMP", 1, Container, function(s) States.InfJump = s end)
 CreateToggleButton("SPEEDBOOST", 2, Container, function(s) States.SpeedBoost = s end)
 CreateSlider("SPEED VALUE", 3, Container, 16, 150, function(v) States.SpeedValue = v end)
 CreateToggleButton("JUMPBOOST", 4, Container, function(s) States.JumpBoost = s end)
 CreateSlider("JUMP VALUE", 5, Container, 50, 100, function(v) States.JumpValue = v end)
-CreateToggleButton("AUTOWEB", 6, Container, function(s) States.AutoWeb = s end)
-CreateToggleButton("BUYTRAP", 7, Container, function(s) States.BuyTrap = s ProcessTrapPurchase() end)
-CreateToggleButton("OPTIMIZATION", 8, Container, OptimizeWorld)
+CreateActionButton("AUTOWEB", 6, Container, TriggerAutoWeb)
+CreateActionButton("BUYTRAP", 7, Container, TriggerBuyTrap)
+CreateToggleButton("AUTOBAT", 8, Container, function(s) States.AutoBat = s end)
 
--- Кнопка развертывания подменю ESP
 local EspSectionButton = Instance.new("TextButton")
 EspSectionButton.Size = UDim2.new(1, 0, 0, 35)
 EspSectionButton.BackgroundColor3 = Color3.fromRGB(30, 45, 60)
@@ -513,11 +548,6 @@ EspSectionButton.MouseButton1Click:Connect(function()
     EspMenu.Visible = not EspMenu.Visible
 end)
 
--- Наполнение меню ESP
+-- Наполнение очищенного контейнера подсистемы ESP
 CreateToggleButton("ESP PLAYERS", 1, EspMenu, function(s) States.EspPlayers = s end)
 CreateToggleButton("ESP LOCK", 2, EspMenu, function(s) States.EspLock = s end)
-CreateToggleButton("ESP BRAINROT", 3, EspMenu, function(s) States.EspBrainrot = s end)
-
-LocalPlayer.CharacterAdded:Connect(function()
-    if States.Optimization then task.wait(1) OptimizeWorld(true) end
-end)
