@@ -13,7 +13,7 @@ local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local Camera = Workspace.CurrentCamera
 
--- GUI
+-- [ИСПРАВЛЕНО] Принудительная инициализация GUI с ожиданием
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "PetyaHub_v3"
 ScreenGui.ResetOnSpawn = false
@@ -21,20 +21,11 @@ local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
 if playerGui then
     ScreenGui.Parent = playerGui
 else
+    -- fallback через CoreGui
     pcall(function() ScreenGui.Parent = game:GetService("CoreGui") end)
 end
 
--- Модальный фон для блокировки кликов (прозрачный, перехватывает ввод)
-local Backdrop = Instance.new("Frame")
-Backdrop.Name = "Backdrop"
-Backdrop.Size = UDim2.new(1, 0, 1, 0)
-Backdrop.BackgroundTransparency = 1
-Backdrop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-Backdrop.Visible = false
-Backdrop.Active = true
-Backdrop.ZIndex = 0
-Backdrop.Parent = ScreenGui
-
+-- Глобальная матрица состояний
 local States = {
     InfJump = false,
     SpeedBoost = false,
@@ -49,7 +40,7 @@ local States = {
 local ESP_Storage = {}
 
 --------------------------------------------------------------------------------
--- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+-- ВСПОМОГАТЕЛЬНЫЕ СИСТЕМНЫЕ ФУНКЦИИ И ПОИСК ЦЕЛЕЙ
 --------------------------------------------------------------------------------
 
 local function GetClosestPlayerToMe()
@@ -108,7 +99,7 @@ RunService.PostSimulation:Connect(function()
 end)
 
 --------------------------------------------------------------------------------
--- AUTOWEB (проверенная логика)
+-- ИСПРАВЛЕННЫЕ ИСПОЛНИТЕЛЬНЫЕ КОМАНДЫ
 --------------------------------------------------------------------------------
 
 local function TriggerAutoWeb()
@@ -121,22 +112,21 @@ local function TriggerAutoWeb()
     local TargetChar, Distance = GetClosestPlayerToMe()
     if not TargetChar then return end
     
+    -- Берем инструмент в руки
     Tool.Parent = Character
-    task.wait(0.15)
+    task.wait(0.05)
     
     local TargetRoot = TargetChar:FindFirstChild("HumanoidRootPart")
-    if not TargetRoot then return end
+    if TargetRoot then
+        -- Наведение камеры на цель для обеспечения точности клика/активации
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, TargetRoot.Position)
+        task.wait(0.02)
+    end
     
-    Camera.CFrame = CFrame.new(Camera.CFrame.Position, TargetRoot.Position)
-    task.wait(0.05)
-    
-    -- Активация и деактивация для эмуляции клика
-    Tool:Activate()
-    task.wait(0.1)
-    Tool:Deactivate()
-    task.wait(0.05)
+    -- Клик/Активация
     Tool:Activate()
     
+    -- Поиск удаленных событий внутри Web Slinger и отправка сигналов
     local Remote = Tool:FindFirstChildOfClass("RemoteEvent") or Tool:FindFirstChildOfClass("RemoteFunction")
     if Remote then
         local targetPlayer = Players:GetPlayerFromCharacter(TargetChar)
@@ -145,20 +135,22 @@ local function TriggerAutoWeb()
                 Remote:FireServer(TargetChar)
                 Remote:FireServer(TargetRoot)
                 Remote:FireServer(TargetRoot.Position)
-                if targetPlayer then Remote:FireServer(targetPlayer) end
+                if targetPlayer then 
+                    Remote:FireServer(targetPlayer)
+                    Remote:FireServer("Hit", targetPlayer, TargetRoot.Position)
+                end
             else
                 Remote:InvokeServer(TargetChar)
                 Remote:InvokeServer(TargetRoot)
                 Remote:InvokeServer(TargetRoot.Position)
-                if targetPlayer then Remote:InvokeServer(targetPlayer) end
+                if targetPlayer then 
+                    Remote:InvokeServer(targetPlayer)
+                    Remote:InvokeServer("Hit", targetPlayer, TargetRoot.Position)
+                end
             end
         end)
     end
 end
-
---------------------------------------------------------------------------------
--- BUYTRAP (проверенная логика)
---------------------------------------------------------------------------------
 
 local function TriggerBuyTrap()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -176,6 +168,7 @@ local function TriggerBuyTrap()
     collect(LocalPlayer.PlayerGui)
     collect(game:GetService("StarterGui"))
     
+    -- Расширенная матрица подбора аргументов для покупки ловушки в магазине
     local argsToTry = {
         {"Trap"}, {"trap"}, {"BuyTrap"}, {"buy trap"},
         {"Purchase", "Trap"}, {"Buy", "Trap"}, {"Shop", "Trap"},
@@ -183,8 +176,7 @@ local function TriggerBuyTrap()
         {1, "Trap"}, {"Buy", "trap", 1}, {"Purchase", "trap", 1},
         {"PurchaseItem", "Trap"}, {"BuyItem", "Trap"},
         {"BuyTrap", "Trap"}, {"Buy", "Trap", "Trap"},
-        {"Trap", "buy"}, {"buy", "Trap"},
-        {"Buy", "Trap", 1000}, {"Purchase", "Trap", 1000}
+        {"Item", "Trap"}, {"Get", "Trap"}
     }
     
     for _, remote in ipairs(allRemotes) do
@@ -201,49 +193,7 @@ local function TriggerBuyTrap()
             end
         end
     end
-    
-    -- Поиск кнопок в GUI магазина
-    task.wait(0.1)
-    local function searchAndClick(parent)
-        for _, child in ipairs(parent:GetDescendants()) do
-            if child:IsA("TextButton") or child:IsA("ImageButton") then
-                local text = (child.Text or child.Name):lower()
-                if text:find("buy") or text:find("purchase") or text:find("auto buy") then
-                    local parentFrame = child.Parent
-                    if parentFrame then
-                        local hasTrap = false
-                        for _, sub in ipairs(parentFrame:GetDescendants()) do
-                            if sub:IsA("TextLabel") and sub.Text:lower():find("trap") then
-                                hasTrap = true
-                                break
-                            end
-                        end
-                        if hasTrap then
-                            pcall(function()
-                                child:Activate()
-                                child.MouseButton1Click:Fire()
-                            end)
-                            return
-                        end
-                    end
-                end
-            elseif child:IsA("Frame") or child:IsA("ScrollingFrame") then
-                searchAndClick(child)
-            end
-        end
-    end
-    
-    local guis = {LocalPlayer.PlayerGui, game:GetService("CoreGui")}
-    for _, gui in ipairs(guis) do
-        if gui then
-            pcall(function() searchAndClick(gui) end)
-        end
-    end
 end
-
---------------------------------------------------------------------------------
--- AUTOBAT
---------------------------------------------------------------------------------
 
 task.spawn(function()
     while true do
@@ -273,12 +223,12 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- ESP (шрифт Arial Black, размер 20)
+-- МОДУЛЬ ESP С УЛУЧШЕННЫМ ПОИСКОМ ТАЙМЕРОВ
 --------------------------------------------------------------------------------
 
 local function findTimerText(obj)
     local function recursiveSearch(instance, depth)
-        if depth and depth > 20 then return nil end
+        if depth and depth > 20 then return nil end  -- защита от глубокой рекурсии
         if instance:IsA("TextLabel") or instance:IsA("TextMesh") or instance:IsA("TextBox") or instance:IsA("TextButton") then
             local text = instance.Text
             if text and (text:match("%d+%s*[sm]") or text:match("%d+:%d+") or text:match("%d+%s*с") or text:match("%d+%s*сек")) then
@@ -309,7 +259,7 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     
     local Billboard = Instance.new("BillboardGui")
     Billboard.Adornee = isPlayer and object:FindFirstChild("HumanoidRootPart") or object
-    Billboard.Size = UDim2.new(0, 300, 0, 80)
+    Billboard.Size = UDim2.new(0, 200, 0, 50)
     Billboard.AlwaysOnTop = true
     Billboard.StudsOffset = Vector3.new(0, 3, 0)
     
@@ -318,8 +268,16 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     Label.BackgroundTransparency = 1
     Label.Text = text or "0s"
     Label.TextColor3 = color
-    Label.Font = Enum.Font.ArialBlack
-    Label.TextSize = 20
+    
+    -- Кастомизация шрифта и размера для ESP LOCK
+    if stateKey == "EspLock" then
+        Label.Font = Enum.Font.ArialBlack
+        Label.TextSize = 16
+    else
+        Label.Font = Enum.Font.Arcade
+        Label.TextSize = 14
+    end
+    
     Label.Parent = Billboard
     Billboard.Parent = ScreenGui
     
@@ -353,7 +311,7 @@ task.spawn(function()
         end
         if States.EspLock then
             for _, obj in ipairs(Workspace:GetDescendants()) do
-                if obj:IsA("BasePart") then
+                if States.EspLock and obj:IsA("BasePart") then
                     local timerText = findTimerText(obj)
                     if timerText then
                         CreateESP(obj, timerText, Color3.fromRGB(255, 170, 0), "EspLock", false)
@@ -592,71 +550,4 @@ local function CreateSlider(name, layoutOrder, parentContainer, min, max, callba
         local RelativeX = LocationX - SliderBG.AbsolutePosition.X
         local Percentage = math.clamp(RelativeX / SliderBG.AbsoluteSize.X, 0, 1)
         
-        SliderFill.Size = UDim2.new(Percentage, 0, 1, 0)
-        local CurrentVal = math.floor(min + (max - min) * Percentage)
-        ValueLabel.Text = tostring(CurrentVal)
-        callback(CurrentVal)
-    end
-    
-    SliderBG.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            IsSliding = true
-            TrackInboundMouse()
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input)
-        if IsSliding and input.UserInputType == Enum.UserInputType.MouseMovement then
-            TrackInboundMouse()
-        end
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            IsSliding = false
-        end
-    end)
-end
-
---------------------------------------------------------------------------------
--- ЗАПОЛНЕНИЕ ИНТЕРФЕЙСА И БЛОКИРОВКА
---------------------------------------------------------------------------------
-
-ToggleButton.MouseButton1Click:Connect(function()
-    local toggle = not MainMenu.Visible
-    MainMenu.Visible = toggle
-    EspMenu.Visible = false
-    Backdrop.Visible = toggle  -- блокируем клики, когда меню открыто
-end)
-
-local EspSectionButton = Instance.new("TextButton")
-EspSectionButton.Size = UDim2.new(1, 0, 0, 35)
-EspSectionButton.BackgroundColor3 = Color3.fromRGB(30, 45, 60)
-EspSectionButton.Text = "-> OPEN ESP SECTION"
-EspSectionButton.TextColor3 = Color3.fromRGB(0, 255, 255)
-EspSectionButton.Font = Enum.Font.Arcade
-EspSectionButton.TextSize = 14
-EspSectionButton.LayoutOrder = 9
-EspSectionButton.Parent = Container
-
-EspSectionButton.MouseButton1Click:Connect(function()
-    local espVisible = not EspMenu.Visible
-    EspMenu.Visible = espVisible
-    if espVisible then
-        Backdrop.Visible = true
-    else
-        Backdrop.Visible = MainMenu.Visible
-    end
-end)
-
-CreateToggleButton("INFJUMP", 1, Container, function(s) States.InfJump = s end)
-CreateToggleButton("SPEEDBOOST", 2, Container, function(s) States.SpeedBoost = s end)
-CreateSlider("SPEED VALUE", 3, Container, 16, 150, function(v) States.SpeedValue = v end)
-CreateToggleButton("JUMPBOOST", 4, Container, function(s) States.JumpBoost = s end)
-CreateSlider("JUMP VALUE", 5, Container, 50, 100, function(v) States.JumpValue = v end)
-CreateActionButton("AUTOWEB", 6, Container, TriggerAutoWeb)
-CreateActionButton("BUYTRAP", 7, Container, TriggerBuyTrap)
-CreateToggleButton("AUTOBAT", 8, Container, function(s) States.AutoBat = s end)
-
-CreateToggleButton("ESP PLAYERS", 1, EspMenu, function(s) States.EspPlayers = s end)
-CreateToggleButton("ESP LOCK", 2, EspMenu, function(s) States.EspLock = s end)
+        SliderFill.Size = UDim2.new(Percentage, 0, 1, 0
