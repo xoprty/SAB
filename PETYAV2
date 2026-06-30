@@ -97,7 +97,7 @@ RunService.PostSimulation:Connect(function()
 end)
 
 --------------------------------------------------------------------------------
--- РЕАЛИЗАЦИЯ ИСПОЛНИТЕЛЬНЫХ КОМАНД (КНОПКИ И ЦИКЛЫ)
+-- [ИСПРАВЛЕНО] РЕАЛИЗАЦИЯ ИСПОЛНИТЕЛЬНЫХ КОМАНД (КНОПКИ И ЦИКЛЫ)
 --------------------------------------------------------------------------------
 
 -- Однократное точное наведение и выстрел Web Slinger
@@ -106,39 +106,97 @@ local function TriggerAutoWeb()
     if not Character then return end
     
     local Tool = LocalPlayer.Backpack:FindFirstChild("Web Slinger") or LocalPlayer.Backpack:FindFirstChild("WebSlinger") or Character:FindFirstChild("Web Slinger") or Character:FindFirstChild("WebSlinger")
-    if Tool then
-        Tool.Parent = Character
-        task.wait(0.02)
-        local TargetChar = GetClosestPlayerToMe()
-        local TargetRoot = TargetChar and TargetChar:FindFirstChild("HumanoidRootPart")
-        if TargetRoot then
-            -- Фиксация вектора атаки
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, TargetRoot.Position)
-            Tool:Activate()
-            -- Дублирование триггера для сетевых инструментов
-            local Remote = Tool:FindFirstChildOfClass("RemoteEvent") or Tool:FindFirstChildOfClass("RemoteFunction")
-            if Remote then
-                pcall(function() Remote:FireServer(TargetRoot.Position) end)
-                pcall(function() Remote:FireServer(TargetRoot) end)
+    if not Tool then return end
+    
+    local TargetChar, Distance = GetClosestPlayerToMe()
+    if not TargetChar then return end
+    
+    -- Перемещаем инструмент в руки
+    Tool.Parent = Character
+    task.wait(0.1)
+    
+    local TargetRoot = TargetChar:FindFirstChild("HumanoidRootPart")
+    if TargetRoot then
+        -- Наводим камеру
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, TargetRoot.Position)
+    end
+    
+    -- Эмуляция клика: активация и деактивация с задержкой
+    Tool:Activate()
+    task.wait(0.05)
+    Tool:Deactivate()
+    
+    -- Дополнительно пробуем все возможные варианты удалённых вызовов
+    local Remote = Tool:FindFirstChildOfClass("RemoteEvent") or Tool:FindFirstChildOfClass("RemoteFunction")
+    if Remote then
+        local targetPlayer = Players:GetPlayerFromCharacter(TargetChar)
+        pcall(function()
+            if Remote:IsA("RemoteEvent") then
+                Remote:FireServer(TargetChar)          -- вся модель
+                Remote:FireServer(TargetRoot)          -- корневая часть
+                Remote:FireServer(TargetRoot.Position) -- позиция
+                if targetPlayer then
+                    Remote:FireServer(targetPlayer)    -- объект игрока
+                end
+            else
+                Remote:InvokeServer(TargetChar)
+                Remote:InvokeServer(TargetRoot)
+                Remote:InvokeServer(TargetRoot.Position)
+                if targetPlayer then
+                    Remote:InvokeServer(targetPlayer)
+                end
             end
-        end
+        end)
     end
 end
 
--- Сетевой спам-запрос на покупку ловушки в магазине
+-- [ИСПРАВЛЕНО] Сетевой спам-запрос на покупку ловушки в магазине
 local function TriggerBuyTrap()
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
-        if descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction") then
-            local name = descendant.Name:lower()
-            if name:find("buy") or name:find("shop") or name:find("purchase") or name:find("item") or name:find("trap") then
+    local allRemotes = {}
+    
+    -- Сбор всех RemoteEvent и RemoteFunction из распространённых контейнеров
+    local function collect(obj)
+        for _, child in ipairs(obj:GetDescendants()) do
+            if child:IsA("RemoteEvent") or child:IsA("RemoteFunction") then
+                table.insert(allRemotes, child)
+            end
+        end
+    end
+    collect(ReplicatedStorage)
+    collect(Workspace)
+    collect(LocalPlayer.PlayerGui)
+    collect(game:GetService("StarterGui"))
+    
+    -- Расширенный набор аргументов для перебора
+    local argsToTry = {
+        {"Trap"},
+        {"trap"},
+        {"BuyTrap"},
+        {"buy trap"},
+        {"Purchase", "Trap"},
+        {"Buy", "Trap"},
+        {"Shop", "Trap"},
+        {"trap", 1},
+        {"Trap", 1},
+        {"BuyTrap", 1},
+        {1, "Trap"},
+        {"Buy", "trap", 1},
+        {"Purchase", "trap", 1},
+        {"Buy", "Trap", 1},
+        {"PurchaseItem", "Trap"},
+        {"BuyItem", "Trap"}
+    }
+    
+    for _, remote in ipairs(allRemotes) do
+        local name = remote.Name:lower()
+        if name:find("shop") or name:find("store") or name:find("purchase") or name:find("buy") or name:find("trap") or name:find("item") or name:find("market") then
+            for _, args in ipairs(argsToTry) do
                 pcall(function()
-                    if descendant:IsA("RemoteEvent") then
-                        descendant:FireServer("Trap")
-                        descendant:FireServer("trap")
+                    if remote:IsA("RemoteEvent") then
+                        remote:FireServer(unpack(args))
                     else
-                        descendant:InvokeServer("Trap")
-                        descendant:InvokeServer("trap")
+                        remote:InvokeServer(unpack(args))
                     end
                 end)
             end
@@ -176,8 +234,27 @@ task.spawn(function()
 end)
 
 --------------------------------------------------------------------------------
--- СОВЕРШЕННЫЙ МОДУЛЬ СЧИТЫВАНИЯ И ОТРИСОВКИ ESP
+-- [ИСПРАВЛЕНО] СОВЕРШЕННЫЙ МОДУЛЬ СЧИТЫВАНИЯ И ОТРИСОВКИ ESP
 --------------------------------------------------------------------------------
+
+-- Вспомогательная функция поиска текста таймера в объекте и его потомках
+local function findTimerText(obj)
+    local function recursiveSearch(instance)
+        if instance:IsA("TextLabel") or instance:IsA("TextMesh") or instance:IsA("TextBox") or instance:IsA("TextButton") then
+            local text = instance.Text
+            if text and (text:match("%d+%s*[sm]") or text:match("%d+:%d+") or text:match("%d+%s*с") or text:match("%d+%s*сек")) then
+                -- Убираем лишние пробелы и переносы
+                return text:gsub("\n", " "):gsub("%s+", " ")
+            end
+        end
+        for _, child in ipairs(instance:GetChildren()) do
+            local res = recursiveSearch(child)
+            if res then return res end
+        end
+        return nil
+    end
+    return recursiveSearch(obj)
+end
 
 local function CreateESP(object, text, color, stateKey, isPlayer)
     if ESP_Storage[object] then 
@@ -201,7 +278,7 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     local Label = Instance.new("TextLabel")
     Label.Size = UDim2.new(1, 0, 1, 0)
     Label.BackgroundTransparency = 1
-    Label.Text = text
+    Label.Text = text or "0s"
     Label.TextColor3 = color
     Label.Font = Enum.Font.Arcade
     Label.TextSize = 14
@@ -213,21 +290,13 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     task.spawn(function()
         while object and object.Parent and States[stateKey] do 
             if stateKey == "EspLock" then
-                -- Парсинг реального текста таймера с объектов базы данных
-                local realTimerText = "0s"
-                local parentModel = object.Parent
-                if parentModel then
-                    for _, child in ipairs(parentModel:GetDescendants()) do
-                        if child:IsA("TextLabel") and (child.Text:lower():find("lock") or child.Text:find("s") or child.Text:match("%d+")) then
-                            realTimerText = child.Text:gsub("\n", " ")
-                            break
-                        elseif child:IsA("TextMesh") and (child.Text:lower():find("lock") or child.Text:find("s") or child.Text:match("%d+")) then
-                            realTimerText = child.Text:gsub("\n", " ")
-                            break
-                        end
-                    end
+                -- Динамическое обновление текста таймера из потомков объекта
+                local timerText = findTimerText(object)
+                if timerText then
+                    Label.Text = timerText
+                else
+                    -- Если таймер пропал, оставляем последний известный текст
                 end
-                Label.Text = realTimerText
             end
             task.wait(0.2) 
         end
@@ -237,22 +306,26 @@ local function CreateESP(object, text, color, stateKey, isPlayer)
     end)
 end
 
--- Поток сканирования окружения
+-- [ИСПРАВЛЕНО] Поток сканирования окружения
 task.spawn(function()
     while true do
         task.wait(1)
         if States.EspPlayers then
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                    -- Подсветка всей фигурки (Character) и вывод Name
                     CreateESP(p.Character, p.Name, Color3.fromRGB(0, 255, 255), "EspPlayers", true)
                 end
             end
         end
         if States.EspLock then
+            -- Проходим по всем BasePart в Workspace
             for _, obj in ipairs(Workspace:GetDescendants()) do
-                if States.EspLock and (obj.Name:lower():find("base") or obj.Name:lower():find("lock") or obj.Name:lower():find("timer")) and obj:IsA("BasePart") then
-                    CreateESP(obj, "0s", Color3.fromRGB(255, 170, 0), "EspLock", false)
+                if States.EspLock and obj:IsA("BasePart") then
+                    -- Проверяем наличие таймера в потомках
+                    local timerText = findTimerText(obj)
+                    if timerText then
+                        CreateESP(obj, timerText, Color3.fromRGB(255, 170, 0), "EspLock", false)
+                    end
                 end
             end
         end
