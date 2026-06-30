@@ -13,10 +13,13 @@ local LocalPlayer = Players.LocalPlayer
 local Mouse = LocalPlayer:GetMouse()
 local Camera = Workspace.CurrentCamera
 
--- [ИСПРАВЛЕНО] Принудительная инициализация GUI с ожиданием
+-- [ИСПРАВЛЕНО] Принудительная инициализация GUI с ожиданием и гарантированным включением
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "PetyaHub_v3"
 ScreenGui.ResetOnSpawn = false
+ScreenGui.Enabled = true
+ScreenGui.DisplayOrder = 999
+
 local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
 if playerGui then
     ScreenGui.Parent = playerGui
@@ -333,19 +336,47 @@ local ButtonStroke = Instance.new("UIStroke")
 ToggleButton.Name = "TriggerButton"
 ToggleButton.Parent = ScreenGui
 ToggleButton.Size = UDim2.new(0, 50, 0, 50)
-ToggleButton.Position = UDim2.new(0, 20, 0.5, -25)
+ToggleButton.Position = UDim2.new(0, 30, 0.4, 0) -- Смещено для гарантированной видимости
 ToggleButton.BackgroundColor3 = Color3.fromRGB(255, 0, 127)
 ToggleButton.Text = "P"
 ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 ToggleButton.Font = Enum.Font.Arcade
 ToggleButton.TextSize = 24
 ToggleButton.Active = true
-ToggleButton.Draggable = true
+ToggleButton.Visible = true -- Принудительное отображение кнопки
+
 ButtonCorner.CornerRadius = UDim.new(1, 0)
 ButtonCorner.Parent = ToggleButton
 ButtonStroke.Thickness = 2
 ButtonStroke.Color = Color3.fromRGB(255, 100, 200)
 ButtonStroke.Parent = ToggleButton
+
+-- Современный метод перетаскивания вместо устаревшего .Draggable
+local function MakeDraggable(uiFrame, handle)
+    local dragging, dragInput, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = uiFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    handle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            uiFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+MakeDraggable(ToggleButton, ToggleButton)
 
 local MainMenu = Instance.new("Frame")
 local MenuCorner = Instance.new("UICorner")
@@ -361,7 +392,6 @@ MainMenu.Position = UDim2.new(0.5, -140, 0.5, -190)
 MainMenu.BackgroundColor3 = Color3.fromRGB(25, 10, 35)
 MainMenu.Visible = false
 MainMenu.Active = true
-MainMenu.Draggable = true
 
 MenuCorner.CornerRadius = UDim.new(0, 0)
 MenuCorner.Parent = MainMenu
@@ -377,6 +407,7 @@ HeaderText.Text = "@petyahub"
 HeaderText.TextColor3 = Color3.fromRGB(255, 0, 127)
 HeaderText.Font = Enum.Font.Arcade
 HeaderText.TextSize = 18
+MakeDraggable(MainMenu, HeaderText)
 
 Container.Name = "Container"
 Container.Parent = MainMenu
@@ -403,7 +434,6 @@ EspMenu.Position = UDim2.new(0.5, 150, 0.5, -70)
 EspMenu.BackgroundColor3 = Color3.fromRGB(20, 8, 30)
 EspMenu.Visible = false
 EspMenu.Active = true
-EspMenu.Draggable = true
 
 EspStroke.Thickness = 2
 EspStroke.Color = Color3.fromRGB(0, 255, 255)
@@ -416,6 +446,7 @@ EspHeader.TextColor3 = Color3.fromRGB(0, 255, 255)
 EspHeader.Font = Enum.Font.Arcade
 EspHeader.TextSize = 14
 EspHeader.Parent = EspMenu
+MakeDraggable(EspMenu, EspHeader)
 
 EspLayout.Parent = EspMenu
 EspLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -550,4 +581,64 @@ local function CreateSlider(name, layoutOrder, parentContainer, min, max, callba
         local RelativeX = LocationX - SliderBG.AbsolutePosition.X
         local Percentage = math.clamp(RelativeX / SliderBG.AbsoluteSize.X, 0, 1)
         
-        SliderFill.Size = UDim2.new(Percentage, 0, 1, 0
+        SliderFill.Size = UDim2.new(Percentage, 0, 1, 0)
+        local CurrentVal = math.floor(min + (max - min) * Percentage)
+        ValueLabel.Text = tostring(CurrentVal)
+        callback(CurrentVal)
+    end
+    
+    SliderBG.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            IsSliding = true
+            TrackInboundMouse()
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if IsSliding and input.UserInputType == Enum.UserInputType.MouseMovement then
+            TrackInboundMouse()
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            IsSliding = false
+        end
+    end)
+end
+
+--------------------------------------------------------------------------------
+-- ЗАПОЛНЕНИЕ ИНТЕРФЕЙСА
+--------------------------------------------------------------------------------
+
+ToggleButton.MouseButton1Click:Connect(function()
+    local toggle = not MainMenu.Visible
+    MainMenu.Visible = toggle
+    if not toggle then EspMenu.Visible = false end
+end)
+
+CreateToggleButton("INFJUMP", 1, Container, function(s) States.InfJump = s end)
+CreateToggleButton("SPEEDBOOST", 2, Container, function(s) States.SpeedBoost = s end)
+CreateSlider("SPEED VALUE", 3, Container, 16, 150, function(v) States.SpeedValue = v end)
+CreateToggleButton("JUMPBOOST", 4, Container, function(s) States.JumpBoost = s end)
+CreateSlider("JUMP VALUE", 5, Container, 50, 100, function(v) States.JumpValue = v end)
+CreateActionButton("AUTOWEB", 6, Container, TriggerAutoWeb)
+CreateActionButton("BUYTRAP", 7, Container, TriggerBuyTrap)
+CreateToggleButton("AUTOBAT", 8, Container, function(s) States.AutoBat = s end)
+
+local EspSectionButton = Instance.new("TextButton")
+EspSectionButton.Size = UDim2.new(1, 0, 0, 35)
+EspSectionButton.BackgroundColor3 = Color3.fromRGB(30, 45, 60)
+EspSectionButton.Text = "-> OPEN ESP SECTION"
+EspSectionButton.TextColor3 = Color3.fromRGB(0, 255, 255)
+EspSectionButton.Font = Enum.Font.Arcade
+EspSectionButton.TextSize = 14
+EspSectionButton.LayoutOrder = 9
+EspSectionButton.Parent = Container
+
+EspSectionButton.MouseButton1Click:Connect(function()
+    EspMenu.Visible = not EspMenu.Visible
+end)
+
+CreateToggleButton("ESP PLAYERS", 1, EspMenu, function(s) States.EspPlayers = s end)
+CreateToggleButton("ESP LOCK", 2, EspMenu, function(s) States.EspLock = s end)
