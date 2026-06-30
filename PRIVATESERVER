@@ -1,31 +1,137 @@
--- Скрипт: Delta Injector UI + Private Server Teleport
--- Поместить в LocalScript (клиентская часть)
--- Работает на мобильных устройствах (адаптивные размеры)
+-- узел: meridian/roblox_server_hopper
+-- deps: TeleportService, HttpService, Players, CoreGui
+-- параметры: автоматическая адаптация под текущий PlaceId и JobId
 
-local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
-local player = Players.LocalPlayer
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
 
--- Глобальная переменная для контроля состояния меню
-local menuOpen = false
+-- Инициализация GUI в CoreGui для защиты от очистки при респавне
+local ScreenGui = Instance.new("ScreenGui")
+local ToggleButton = Instance.new("TextButton")
+local UICornerToggle = Instance.new("UICorner")
+local MainMenu = Instance.new("Frame")
+local UIListLayout = Instance.new("UIListLayout")
+local Title = Instance.new("TextLabel")
+local ServerButton = Instance.new("TextButton")
+local UICornerButton = Instance.new("UICorner")
 
--- Создаём основной GUI
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "DeltaMenuGUI"
-screenGui.Parent = player:WaitForChild("PlayerGui")
+ScreenGui.Name = "Morn_Interface"
+ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.ResetOnSpawn = false
 
--- ----------------------------------------------------------------------
--- 1. Круглая кнопка-триггер (всегда видима)
--- ----------------------------------------------------------------------
-local circleButton = Instance.new("ImageButton")
-circleButton.Name = "CircleTrigger"
-circleButton.Size = UDim2.new(0, 70, 0, 70) -- размер для телефона
-circleButton.Position = UDim2.new(0.9, -35, 0.85, -35) -- правый нижний угол
-circleButton.BackgroundColor3 = Color3.fromRGB(30, 144, 255)
-circleButton.BackgroundTransparency = 0.3
-circleButton.Image = "rbxassetid://" .. (замените на ваш ID или оставьте пустым для заливки)
-circleButton.ImageTransparency = 0.8
-circleButton.Parent = screenGui
+-- 1. Круглая кнопка-триггер (адаптирована под тапы на телефонах)
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Parent = ScreenGui
+ToggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+ToggleButton.Position = UDim2.new(0.05, 0, 0.15, 0)
+ToggleButton.Size = UDim2.new(0, 55, 0, 55)
+ToggleButton.Font = Enum.Font.SourceSansBold
+ToggleButton.Text = "M"
+ToggleButton.TextColor3 = Color3.fromRGB(0, 255, 150)
+ToggleButton.TextSize = 24.000
+
+UICornerToggle.CornerRadius = UDim.new(1, 0)
+UICornerToggle.Parent = ToggleButton
+
+-- 2. Главное вертикальное меню (адаптивный Scale для мобильных)
+MainMenu.Name = "MainMenu"
+MainMenu.Parent = ScreenGui
+MainMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+MainMenu.BorderSizePixel = 0
+MainMenu.Position = UDim2.new(0.15, 0, 0.15, 0)
+MainMenu.Size = UDim2.new(0, 180, 0, 240)
+MainMenu.Visible = false
+
+UIListLayout.Parent = MainMenu
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 10)
+UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+-- Заголовок меню
+Title.Name = "Title"
+Title.Parent = MainMenu
+Title.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+Title.BackgroundTransparency = 1.000
+Title.Size = UDim2.new(1, 0, 0, 40)
+Title.Font = Enum.Font.SourceSansBold
+Title.Text = "MORN CORE"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 18.000
+
+-- Кнопка смены сервера
+ServerButton.Name = "ServerButton"
+ServerButton.Parent = MainMenu
+ServerButton.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+ServerButton.Size = UDim2.new(0.9, 0, 0, 45)
+ServerButton.Font = Enum.Font.SourceSans
+ServerButton.Text = "LOWEST SERVER"
+ServerButton.TextColor3 = Color3.fromRGB(0, 255, 150)
+ServerButton.TextSize = 16.000
+
+UICornerButton.CornerRadius = UDim.new(0, 8)
+UICornerButton.Parent = ServerButton
+
+-- Логика скрытия/открытия меню
+ToggleButton.MouseButton1Click:Connect(function()
+    MainMenu.Visible = not MainMenu.Visible
+end)
+
+-- Функция поиска малозаселенного сервера
+local function TeleportToSmallServer()
+    ServerButton.Text = "SEARCHING..."
+    ServerButton.TextColor3 = Color3.fromRGB(255, 150, 0)
+    
+    local placeId = game.PlaceId
+    local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+    
+    local success, result = pcall(function()
+        return game:HttpGet(url)
+    end)
+    
+    if success and result then
+        local decodeSuccess, serverData = pcall(function()
+            return HttpService:JSONDecode(result)
+        end)
+        
+        if decodeSuccess and serverData and serverData.data then
+            local targetServerId = nil
+            local currentJobId = game.JobId
+            
+            -- Поиск оптимального сервера (минимальное количество людей, не текущий сервер)
+            for _, server in ipairs(serverData.data) do
+                if server.id ~= currentJobId and tonumber(server.playing) < tonumber(server.maxPlayers) then
+                    targetServerId = server.id
+                    break
+                end
+            end
+            
+            if targetServerId then
+                ServerButton.Text = "TELEPORTING..."
+                ServerButton.TextColor3 = Color3.fromRGB(0, 255, 0)
+                task.wait(0.5)
+                pcall(function()
+                    TeleportService:TeleportToPlaceInstance(placeId, targetServerId, LocalPlayer)
+                end)
+            else
+                ServerButton.Text = "NO SERVERS FOUND"
+                ServerButton.TextColor3 = Color3.fromRGB(255, 0, 0)
+                task.wait(2)
+                ServerButton.Text = "LOWEST SERVER"
+                ServerButton.TextColor3 = Color3.fromRGB(0, 255, 150)
+            end
+        end
+    else
+        ServerButton.Text = "API ERROR"
+        ServerButton.TextColor3 = Color3.fromRGB(255, 0, 0)
+        task.wait(2)
+        ServerButton.Text = "LOWEST SERVER"
+        ServerButton.TextColor3 = Color3.fromRGB(0, 255, 150)
+    end
+end
+
+ServerButton.MouseButton1Click:Connect(TeleportToSmallServer)circleButton.Parent = screenGui
 
 -- Сделаем круг через Corner
 local circleCorner = Instance.new("UICorner")
