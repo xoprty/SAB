@@ -1,0 +1,191 @@
+-- Скрипт: Delta Injector UI + Private Server Teleport
+-- Поместить в LocalScript (клиентская часть)
+-- Работает на мобильных устройствах (адаптивные размеры)
+
+local Players = game:GetService("Players")
+local TeleportService = game:GetService("TeleportService")
+local player = Players.LocalPlayer
+
+-- Глобальная переменная для контроля состояния меню
+local menuOpen = false
+
+-- Создаём основной GUI
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "DeltaMenuGUI"
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+-- ----------------------------------------------------------------------
+-- 1. Круглая кнопка-триггер (всегда видима)
+-- ----------------------------------------------------------------------
+local circleButton = Instance.new("ImageButton")
+circleButton.Name = "CircleTrigger"
+circleButton.Size = UDim2.new(0, 70, 0, 70) -- размер для телефона
+circleButton.Position = UDim2.new(0.9, -35, 0.85, -35) -- правый нижний угол
+circleButton.BackgroundColor3 = Color3.fromRGB(30, 144, 255)
+circleButton.BackgroundTransparency = 0.3
+circleButton.Image = "rbxassetid://" .. (замените на ваш ID или оставьте пустым для заливки)
+circleButton.ImageTransparency = 0.8
+circleButton.Parent = screenGui
+
+-- Сделаем круг через Corner
+local circleCorner = Instance.new("UICorner")
+circleCorner.CornerRadius = UDim.new(1, 0) -- 50% радиуса
+circleCorner.Parent = circleButton
+
+-- Добавим небольшой текст или иконку
+local circleLabel = Instance.new("TextLabel")
+circleLabel.Size = UDim2.new(1, 0, 1, 0)
+circleLabel.BackgroundTransparency = 1
+circleLabel.Text = "☰" -- или "≡"
+circleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+circleLabel.TextSize = 30
+circleLabel.Font = Enum.Font.SourceSansBold
+circleLabel.Parent = circleButton
+
+-- ----------------------------------------------------------------------
+-- 2. Вертикальное прямоугольное меню (скрыто по умолчанию)
+-- ----------------------------------------------------------------------
+local menuFrame = Instance.new("Frame")
+menuFrame.Name = "MenuFrame"
+menuFrame.Size = UDim2.new(0, 200, 0, 300) -- ширина 200, высота 300 (под телефон)
+menuFrame.Position = UDim2.new(0.5, -100, 0.5, -150) -- центр экрана
+menuFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+menuFrame.BackgroundTransparency = 0.15
+menuFrame.BorderSizePixel = 0
+menuFrame.Visible = false
+menuFrame.Parent = screenGui
+
+-- Закруглим углы меню
+local menuCorner = Instance.new("UICorner")
+menuCorner.CornerRadius = UDim.new(0, 12)
+menuCorner.Parent = menuFrame
+
+-- Добавим затемнение фона (опционально)
+local backdrop = Instance.new("Frame")
+backdrop.Size = UDim2.new(1, 0, 1, 0)
+backdrop.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+backdrop.BackgroundTransparency = 0.5
+backdrop.Visible = false
+backdrop.Parent = screenGui
+
+-- ----------------------------------------------------------------------
+-- 3. Кнопка "PRIVATE SERVER"
+-- ----------------------------------------------------------------------
+local privateButton = Instance.new("TextButton")
+privateButton.Name = "PrivateServerBtn"
+privateButton.Size = UDim2.new(0.8, 0, 0, 50)
+privateButton.Position = UDim2.new(0.1, 0, 0.3, 0) -- чуть выше середины
+privateButton.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+privateButton.Text = "PRIVATE SERVER"
+privateButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+privateButton.TextSize = 18
+privateButton.Font = Enum.Font.SourceSansBold
+privateButton.Parent = menuFrame
+
+-- Скруглим кнопку
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 8)
+btnCorner.Parent = privateButton
+
+-- Добавим ещё несколько примеров кнопок (для демонстрации, можно убрать)
+local dummyButton1 = Instance.new("TextButton")
+dummyButton1.Size = UDim2.new(0.8, 0, 0, 40)
+dummyButton1.Position = UDim2.new(0.1, 0, 0.5, 0)
+dummyButton1.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+dummyButton1.Text = "Option 1"
+dummyButton1.TextColor3 = Color3.fromRGB(200, 200, 200)
+dummyButton1.TextSize = 16
+dummyButton1.Font = Enum.Font.SourceSans
+dummyButton1.Parent = menuFrame
+
+local dummyButton2 = dummyButton1:Clone()
+dummyButton2.Position = UDim2.new(0.1, 0, 0.7, 0)
+dummyButton2.Text = "Option 2"
+dummyButton2.Parent = menuFrame
+
+-- ----------------------------------------------------------------------
+-- 4. Логика открытия/закрытия меню
+-- ----------------------------------------------------------------------
+circleButton.MouseButton1Click:Connect(function()
+    menuOpen = not menuOpen
+    menuFrame.Visible = menuOpen
+    backdrop.Visible = menuOpen
+end)
+
+-- Закрытие при клике на затемнение
+backdrop.MouseButton1Click:Connect(function()
+    menuOpen = false
+    menuFrame.Visible = false
+    backdrop.Visible = false
+end)
+
+-- ----------------------------------------------------------------------
+-- 5. Функция PRIVATE SERVER
+-- ----------------------------------------------------------------------
+privateButton.MouseButton1Click:Connect(function()
+    -- Попытка телепортировать игрока на новый сервер (создаётся новый экземпляр)
+    -- Если игра использует TeleportService:Teleport с текущим PlaceId и списком игроков,
+    -- то Roblox автоматически создаст новый сервер, если нет подходящего.
+    -- Это даст "пустой сервер" (если никто не зайдёт одновременно).
+    local placeId = game.PlaceId
+    local playersToTeleport = {player}
+    
+    -- Дополнительно можно передать данные (например, чтобы сервер был "маленьким")
+    -- Но стандартный Teleport не позволяет задать размер сервера.
+    -- Альтернатива: использовать TeleportToPrivateServer с кодом доступа (если есть)
+    -- или использовать HTTP-запрос к API создания приватного сервера (требуется доступ).
+    -- Здесь реализуем простой вариант.
+    
+    -- Обработка ошибок
+    local success, err = pcall(function()
+        TeleportService:Teleport(placeId, playersToTeleport)
+    end)
+    
+    if not success then
+        -- Если телепорт не удался (например, игра не поддерживает), выведем сообщение
+        warn("Teleport failed: " .. tostring(err))
+        -- Можно показать уведомление игроку (через GUI)
+        local failMsg = Instance.new("TextLabel")
+        failMsg.Size = UDim2.new(0.8, 0, 0, 50)
+        failMsg.Position = UDim2.new(0.1, 0, 0.1, 0)
+        failMsg.BackgroundColor3 = Color3.fromRGB(200, 30, 30)
+        failMsg.Text = "Teleport Error!\n" .. tostring(err)
+        failMsg.TextColor3 = Color3.fromRGB(255, 255, 255)
+        failMsg.TextWrapped = true
+        failMsg.Font = Enum.Font.SourceSans
+        failMsg.TextSize = 14
+        failMsg.Parent = menuFrame
+        task.wait(2)
+        failMsg:Destroy()
+    end
+end)
+
+-- ----------------------------------------------------------------------
+-- 6. Адаптация под мобильные экраны (уже учтено размерами в UDim2)
+--    Дополнительно можно добавить масштабирование в зависимости от разрешения
+-- ----------------------------------------------------------------------
+-- Если экран маленький, уменьшим размеры
+local function adaptToScreen()
+    local viewportSize = game:GetService("Workspace").CurrentCamera.ViewportSize
+    if viewportSize.X < 600 or viewportSize.Y < 400 then
+        -- Телефон: делаем круглую кнопку меньше, меню уже
+        circleButton.Size = UDim2.new(0, 60, 0, 60)
+        circleButton.Position = UDim2.new(0.9, -30, 0.85, -30)
+        menuFrame.Size = UDim2.new(0, 170, 0, 260)
+        menuFrame.Position = UDim2.new(0.5, -85, 0.5, -130)
+        privateButton.Size = UDim2.new(0.85, 0, 0, 45)
+        privateButton.Position = UDim2.new(0.075, 0, 0.25, 0)
+        privateButton.TextSize = 16
+    end
+end
+adaptToScreen()
+-- Также обновим при изменении размера окна (для ПК-мобильного переключения)
+game:GetService("Workspace").CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(adaptToScreen)
+
+-- ----------------------------------------------------------------------
+-- 7. Дополнительно: анимация появления (необязательно, но улучшит UX)
+-- ----------------------------------------------------------------------
+-- Можно добавить TweenService анимации для меню, но для простоты опущено.
+-- ----------------------------------------------------------------------
+
+print("Delta UI loaded. Private Server ready.")
