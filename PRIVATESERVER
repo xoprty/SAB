@@ -1,12 +1,11 @@
--- узел: meridian/roblox_server_hopper_v2
+-- узел: meridian/roblox_server_hopper_v3
 -- deps: TeleportService, HttpService, Players
--- параметры: принудительный рендеринг через PlayerGui
+-- параметры: жесткий лимит заполненности (<= 1 игрока)
 
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local Players = game:GetService("Players")
 
--- Ожидание полной инициализации локального игрока
 if not game:IsLoaded() then
     game.Loaded:Wait()
 end
@@ -18,12 +17,10 @@ end
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- Удаление предыдущей копии интерфейса, если она существовала
 if PlayerGui:FindFirstChild("Morn_Interface") then
     PlayerGui:FindFirstChild("Morn_Interface"):Destroy()
 end
 
--- Инициализация GUI
 local ScreenGui = Instance.new("ScreenGui")
 local ToggleButton = Instance.new("TextButton")
 local UICornerToggle = Instance.new("UICorner")
@@ -35,13 +32,12 @@ local UICornerButton = Instance.new("UICorner")
 
 ScreenGui.Name = "Morn_Interface"
 ScreenGui.Parent = PlayerGui
-ScreenGui.ResetOnSpawn = false -- Защита от удаления при смерти
+ScreenGui.ResetOnSpawn = false
 
--- 1. Круглая кнопка-триггер
 ToggleButton.Name = "ToggleButton"
 ToggleButton.Parent = ScreenGui
 ToggleButton.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-ToggleButton.Position = UDim2.new(0.05, 0, 0.25, 0) -- Сдвинуто чуть ниже, чтобы не перекрывать чат
+ToggleButton.Position = UDim2.new(0.05, 0, 0.25, 0)
 ToggleButton.Size = UDim2.new(0, 55, 0, 55)
 ToggleButton.Font = Enum.Font.SourceSansBold
 ToggleButton.Text = "M"
@@ -52,7 +48,6 @@ ToggleButton.ZIndex = 10
 UICornerToggle.CornerRadius = UDim.new(1, 0)
 UICornerToggle.Parent = ToggleButton
 
--- 2. Главное вертикальное меню
 MainMenu.Name = "MainMenu"
 MainMenu.Parent = ScreenGui
 MainMenu.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
@@ -67,7 +62,6 @@ UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 UIListLayout.Padding = UDim.new(0, 10)
 UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 
--- Заголовок меню
 Title.Name = "Title"
 Title.Parent = MainMenu
 Title.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
@@ -79,7 +73,6 @@ Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.TextSize = 18.000
 Title.ZIndex = 11
 
--- Кнопка смены сервера
 ServerButton.Name = "ServerButton"
 ServerButton.Parent = MainMenu
 ServerButton.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
@@ -93,17 +86,16 @@ ServerButton.ZIndex = 11
 UICornerButton.CornerRadius = UDim.new(0, 8)
 UICornerButton.Parent = ServerButton
 
--- Логика скрытия/открытия меню
 ToggleButton.MouseButton1Click:Connect(function()
     MainMenu.Visible = not MainMenu.Visible
 end)
 
--- Функция поиска малозаселенного сервера
 local function TeleportToSmallServer()
-    ServerButton.Text = "SEARCHING..."
+    ServerButton.Text = "SCANNING..."
     ServerButton.TextColor3 = Color3.fromRGB(255, 150, 0)
     
     local placeId = game.PlaceId
+    -- Запрос списка публичных серверов с сортировкой по возрастанию
     local url = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
     
     local success, result = pcall(function()
@@ -119,31 +111,59 @@ local function TeleportToSmallServer()
             local targetServerId = nil
             local currentJobId = game.JobId
             
-            -- Поиск оптимального сервера (где меньше всего людей, но не 0 и не текущий)
+            -- Жесткий перебор: ищем первый узел, где игроков строго <= 1
             for _, server in ipairs(serverData.data) do
-                if server.id ~= currentJobId and tonumber(server.playing) < tonumber(server.maxPlayers) then
+                local playerCount = tonumber(server.playing)
+                if server.id ~= currentJobId and playerCount and playerCount <= 1 then
                     targetServerId = server.id
                     break
                 end
             end
             
             if targetServerId then
-                ServerButton.Text = "TELEPORTING..."
+                ServerButton.Text = "FOUND! GOING..."
                 ServerButton.TextColor3 = Color3.fromRGB(0, 255, 0)
-                task.wait(0.5)
+                task.wait(0.3)
                 pcall(function()
                     TeleportService:TeleportToPlaceInstance(placeId, targetServerId, LocalPlayer)
                 end)
             else
-                ServerButton.Text = "NOT FOUND"
-                ServerButton.TextColor3 = Color3.fromRGB(255, 0, 0)
-                task.wait(1.5)
-                ServerButton.Text = "PRIVATE SERVER"
-                ServerButton.TextColor3 = Color3.fromRGB(0, 255, 150)
+                -- Если по умолчанию Asc выдал плохой чанк данных, пробуем инвертировать поиск
+                ServerButton.Text = "TRYING ALT PAGE..."
+                local altUrl = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Desc&limit=100"
+                local altSuccess, altResult = pcall(function() return game:HttpGet(altUrl) end)
+                
+                if altSuccess and altResult then
+                    local altDecode, altData = pcall(function() return HttpService:JSONDecode(altResult) end)
+                    if altDecode and altData.data then
+                        for _, server in ipairs(altData.data) do
+                            local playerCount = tonumber(server.playing)
+                            if server.id ~= currentJobId and playerCount and playerCount <= 1 then
+                                targetServerId = server.id
+                                break
+                            end
+                        end
+                    end
+                end
+                
+                if targetServerId then
+                    ServerButton.Text = "FOUND! GOING..."
+                    ServerButton.TextColor3 = Color3.fromRGB(0, 255, 0)
+                    task.wait(0.3)
+                    pcall(function()
+                        TeleportService:TeleportToPlaceInstance(placeId, targetServerId, LocalPlayer)
+                    end)
+                else
+                    ServerButton.Text = "0-1 PLR NOT FOUND"
+                    ServerButton.TextColor3 = Color3.fromRGB(255, 0, 0)
+                    task.wait(1.5)
+                    ServerButton.Text = "PRIVATE SERVER"
+                    ServerButton.TextColor3 = Color3.fromRGB(0, 255, 150)
+                end
             end
         end
     else
-        ServerButton.Text = "HTTP ERROR"
+        ServerButton.Text = "API TIMEOUT"
         ServerButton.TextColor3 = Color3.fromRGB(255, 0, 0)
         task.wait(1.5)
         ServerButton.Text = "PRIVATE SERVER"
