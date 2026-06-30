@@ -71,12 +71,11 @@ end
 local function GetTopBrainrotPlayer()
     local TopPlayer = nil
     local MaxValue = -1
-    local IncomeName = "Income" -- Базовое имя для дохода, перебирается ниже
+    local IncomeName = "Income"
     
     for _, player in ipairs(Players:GetPlayers()) do
         local leaderstats = player:FindFirstChild("leaderstats")
         if leaderstats then
-            -- Поиск подходящей валюты по паттернам Brainrot или Дохода
             local targetStat = nil
             for _, stat in ipairs(leaderstats:GetChildren()) do
                 local nameLower = stat.Name:lower()
@@ -129,33 +128,40 @@ RunService.PostSimulation:Connect(function()
     end
 end)
 
--- Перехват клика мыши для AUTOAIM WEB (нажатие прямо на игрока при использовании Web Slinger)
-local HookingClick = false
+-- Усовершенствованная доводка AUTOAIM WEB (перехват клика рядом и мгновенное наведение луча на игрока)
+local IsRedirecting = false
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if States.AutoAimWeb and input.UserInputType == Enum.UserInputType.MouseButton1 then
         local Character = LocalPlayer.Character
         if Character then
             local Tool = Character:FindFirstChild("Web Slinger") or Character:FindFirstChild("WebSlinger")
-            if Tool and not HookingClick then
+            if Tool and not IsRedirecting then
                 local TargetChar, Distance = GetClosestPlayerToMe()
                 if TargetChar then
                     local TargetRoot = TargetChar:FindFirstChild("HumanoidRootPart")
                     if TargetRoot then
-                        HookingClick = true
-                        -- Подмена позиции мыши через вызов удаленного события инструмента
+                        IsRedirecting = true
+                        
+                        -- Активация инструмента с подменой аргументов
+                        Tool:Activate()
+                        
                         local Remote = Tool:FindFirstChildOfClass("RemoteEvent") or Tool:FindFirstChildOfClass("RemoteFunction")
                         if Remote then
                             pcall(function()
                                 if Remote:IsA("RemoteEvent") then
+                                    -- Посылаем координаты врага серверу вместо оригинальной позиции мыши
                                     Remote:FireServer(TargetRoot.Position, TargetChar)
+                                    Remote:FireServer(TargetRoot)
                                 else
                                     Remote:InvokeServer(TargetRoot.Position, TargetChar)
+                                    Remote:InvokeServer(TargetRoot)
                                 end
                             end)
                         end
+                        
                         task.wait(0.05)
-                        HookingClick = false
+                        IsRedirecting = false
                     end
                 end
             end
